@@ -1,0 +1,17 @@
+# Telegram Bot Framework
+aiogram>=3.0.0
+
+# OpenAI API
+openai>=1.0.0
+
+# Vector Database
+faiss-cpu>=1.7.0
+numpy
+
+# Utilities
+python-dotenv
+
+# HTTP клиент для работы с API
+aiohttp
+requests
+

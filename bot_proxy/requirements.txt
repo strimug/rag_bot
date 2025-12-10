@@ -1,0 +1,14 @@
+# Telegram Bot Framework
+aiogram>=3.0.0
+
+# HTTP клиенты для работы с ProxyAPI
+requests
+aiohttp
+
+# Vector Database
+faiss-cpu>=1.7.0
+numpy
+
+# Utilities
+python-dotenv
+
