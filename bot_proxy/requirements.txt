@@ -1,7 +1,7 @@
 # Telegram Bot Framework
 aiogram>=3.0.0
 
-# HTTP клиенты для работы с ProxyAPI
+# HTTP клиенты для работы с OpenRouter API
 requests
 aiohttp
 

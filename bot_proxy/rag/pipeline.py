@@ -1,8 +1,11 @@
 """
-Модуль RAG-пайплайна для работы через ProxyAPI.
+Модуль RAG-пайплайна для работы через OpenRouter API.
 
-Основное отличие от версии с OpenAI SDK - использование HTTP запросов
-вместо клиентской библиотеки. Это дает больше контроля и гибкости.
+Использует HTTP запросы к OpenRouter API, что позволяет:
+- Использовать различные модели LLM через единый интерфейс
+- Полный контроль над запросами и ответами
+- Легкая отладка и мониторинг
+- Специальные headers для OpenRouter
 """
 
 import logging
@@ -10,12 +13,12 @@ from typing import Dict, List
 import requests
 import base64
 from io import BytesIO
-from rag.embedder import ProxyAPIEmbedder
+from rag.embedder import OpenRouterEmbedder
 from rag.vectorstore import FAISSVectorStore
 from rag.retriever import DocumentRetriever
 from config import (
-    PROXY_API_URL,
-    PROXY_API_KEY, 
+    OPENROUTER_BASE_URL,
+    OPENROUTER_API_KEY, 
     CHAT_MODEL, 
     VISION_MODEL,
     SYSTEM_PROMPT, 
@@ -31,34 +34,37 @@ logger = logging.getLogger(__name__)
 
 class RAGPipeline:
     """
-    RAG-пайплайн с использованием ProxyAPI.
+    RAG-пайплайн с использованием OpenRouter API.
     
-    Все запросы к LLM выполняются через HTTP, что позволяет:
-    - Использовать любые OpenAI-совместимые API
+    Все запросы к LLM выполняются через HTTP к OpenRouter, что позволяет:
+    - Использовать различные модели LLM через единый интерфейс
     - Полный контроль над запросами и ответами
     - Легкая отладка и мониторинг
-    - Возможность добавления middleware
+    - Специальные headers для OpenRouter rankings
     """
     
     def __init__(self):
         """
         Инициализация RAG-пайплайна.
         """
-        logger.info("Инициализация RAG Pipeline (ProxyAPI)...")
+        logger.info("Инициализация RAG Pipeline (OpenRouter)...")
         
-        # Настраиваем endpoints и headers
-        self.api_url = PROXY_API_URL.rstrip('/')
-        self.api_key = PROXY_API_KEY
+        # Настраиваем endpoints и headers для OpenRouter
+        self.api_url = OPENROUTER_BASE_URL.rstrip('/')
+        self.api_key = OPENROUTER_API_KEY
         
         self.chat_endpoint = f"{self.api_url}/chat/completions"
         
+        # OpenRouter требует специальные headers
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com",  # Для OpenRouter rankings
+            "X-Title": "RAG Bot",  # Для OpenRouter rankings
         }
         
         # Инициализируем компоненты RAG
-        self.embedder = ProxyAPIEmbedder()
+        self.embedder = OpenRouterEmbedder()
         self.vectorstore = FAISSVectorStore()
         self.retriever = DocumentRetriever(self.embedder, self.vectorstore)
         
@@ -73,7 +79,7 @@ class RAGPipeline:
     
     def query(self, user_query: str, top_k: int = TOP_K_RESULTS) -> Dict[str, any]:
         """
-        Выполняет полный RAG-запрос через ProxyAPI.
+        Выполняет полный RAG-запрос через OpenRouter API.
         
         Args:
             user_query: Запрос пользователя
@@ -135,8 +141,8 @@ class RAGPipeline:
         # Добавляем текущий вопрос с RAG контекстом
         messages.append({"role": "user", "content": prompt_with_context})
         
-        # Шаг 5: Отправляем запрос к ProxyAPI
-        logger.info(f"Отправка запроса к модели {CHAT_MODEL} (всего сообщений: {len(messages)})")
+        # Шаг 5: Отправляем запрос к OpenRouter API
+        logger.info(f"Отправка запроса к модели {CHAT_MODEL} через OpenRouter (всего сообщений: {len(messages)})")
         try:
             payload = {
                 "model": CHAT_MODEL,
@@ -152,17 +158,34 @@ class RAGPipeline:
                 timeout=REQUEST_TIMEOUT
             )
             
-            response.raise_for_status()
-            data = response.json()
-            answer = data['choices'][0]['message']['content']
-            
-            logger.info(f"Ответ получен, длина: {len(answer)} символов")
+            # Проверяем статус ответа
+            if response.status_code != 200:
+                error_text = response.text
+                try:
+                    error_json = response.json()
+                    error_msg = f"OpenRouter API вернул статус {response.status_code}: {error_json}"
+                except:
+                    error_msg = f"OpenRouter API вернул статус {response.status_code}: {error_text}"
+                logger.error(error_msg)
+                answer = f"❌ Ошибка при обращении к OpenRouter API: {error_msg}"
+            else:
+                data = response.json()
+                
+                # Проверяем на ошибки в ответе
+                if "error" in data:
+                    error_info = data["error"]
+                    error_msg = f"OpenRouter API ошибка: {error_info.get('message', 'Unknown error')} (code: {error_info.get('code', 'unknown')})"
+                    logger.error(error_msg)
+                    answer = f"❌ Ошибка OpenRouter API: {error_msg}"
+                else:
+                    answer = data['choices'][0]['message']['content']
+                    logger.info(f"Ответ получен от OpenRouter, длина: {len(answer)} символов")
             
         except requests.exceptions.RequestException as e:
-            logger.error(f"Ошибка HTTP запроса к LLM: {e}")
-            answer = f"❌ Ошибка при обращении к API: {str(e)}"
+            logger.error(f"Ошибка HTTP запроса к OpenRouter: {e}")
+            answer = f"❌ Ошибка при обращении к OpenRouter API: {str(e)}"
         except (KeyError, IndexError) as e:
-            logger.error(f"Ошибка парсинга ответа API: {e}")
+            logger.error(f"Ошибка парсинга ответа OpenRouter API: {e}")
             answer = f"❌ Ошибка при обработке ответа: {str(e)}"
         except Exception as e:
             logger.error(f"Неожиданная ошибка при генерации ответа: {e}")
@@ -178,7 +201,7 @@ class RAGPipeline:
     
     def process_image(self, image_url: str, user_query: str = None) -> Dict[str, any]:
         """
-        Обрабатывает изображение с помощью vision модели через ProxyAPI.
+        Обрабатывает изображение с помощью vision модели через OpenRouter API.
         
         Args:
             image_url: URL изображения
@@ -187,7 +210,7 @@ class RAGPipeline:
         Returns:
             Словарь с результатами обработки
         """
-        logger.info(f"Обработка изображения с vision моделью")
+        logger.info(f"Обработка изображения с vision моделью через OpenRouter")
         
         try:
             # Шаг 1: Извлекаем текст/описание с изображения
@@ -218,13 +241,41 @@ class RAGPipeline:
             )
             
             # Проверяем статус
-            response.raise_for_status()
+            if response.status_code != 200:
+                error_text = response.text
+                try:
+                    error_json = response.json()
+                    error_msg = f"OpenRouter API вернул статус {response.status_code}: {error_json}"
+                except:
+                    error_msg = f"OpenRouter API вернул статус {response.status_code}: {error_text}"
+                logger.error(error_msg)
+                return {
+                    "extracted_text": None,
+                    "rag_answer": None,
+                    "sources": [],
+                    "error": f"Ошибка OpenRouter API: {error_msg}",
+                    "model": VISION_MODEL
+                }
             
             # Парсим ответ
             data = response.json()
+            
+            # Проверяем на ошибки
+            if "error" in data:
+                error_info = data["error"]
+                error_msg = f"OpenRouter API ошибка: {error_info.get('message', 'Unknown error')} (code: {error_info.get('code', 'unknown')})"
+                logger.error(error_msg)
+                return {
+                    "extracted_text": None,
+                    "rag_answer": None,
+                    "sources": [],
+                    "error": error_msg,
+                    "model": VISION_MODEL
+                }
+            
             extracted_text = data['choices'][0]['message']['content']
             
-            logger.info(f"Текст извлечен из изображения, длина: {len(extracted_text)} символов")
+            logger.info(f"Текст извлечен из изображения через OpenRouter, длина: {len(extracted_text)} символов")
             
             # Шаг 2: Если есть дополнительный запрос, обрабатываем через RAG
             if user_query and self.is_loaded:
@@ -250,12 +301,12 @@ class RAGPipeline:
             }
             
         except requests.exceptions.RequestException as e:
-            logger.error(f"Ошибка HTTP запроса при обработке изображения: {e}")
+            logger.error(f"Ошибка HTTP запроса к OpenRouter при обработке изображения: {e}")
             return {
                 "extracted_text": None,
                 "rag_answer": None,
                 "sources": [],
-                "error": f"Ошибка API: {str(e)}",
+                "error": f"Ошибка OpenRouter API: {str(e)}",
                 "model": VISION_MODEL
             }
         except Exception as e:
@@ -322,7 +373,7 @@ class RAGPipeline:
     
     def test_connection(self) -> bool:
         """
-        Проверяет доступность ProxyAPI.
+        Проверяет доступность OpenRouter API.
         
         Returns:
             True если API доступен
@@ -332,7 +383,7 @@ class RAGPipeline:
             embedder_ok = self.embedder.test_connection()
             
             # Проверяем chat completions API
-            logger.info("Проверка chat completions API...")
+            logger.info("Проверка chat completions API через OpenRouter...")
             payload = {
                 "model": CHAT_MODEL,
                 "messages": [{"role": "user", "content": "test"}],
@@ -346,12 +397,28 @@ class RAGPipeline:
                 timeout=REQUEST_TIMEOUT
             )
             
-            response.raise_for_status()
-            logger.info("✅ Chat completions API работает")
+            if response.status_code != 200:
+                error_text = response.text
+                try:
+                    error_json = response.json()
+                    error_msg = f"OpenRouter API вернул статус {response.status_code}: {error_json}"
+                except:
+                    error_msg = f"OpenRouter API вернул статус {response.status_code}: {error_text}"
+                logger.error(f"❌ Chat completions API не работает: {error_msg}")
+                return False
+            
+            data = response.json()
+            if "error" in data:
+                error_info = data["error"]
+                error_msg = f"OpenRouter API ошибка: {error_info.get('message', 'Unknown error')}"
+                logger.error(f"❌ Chat completions API ошибка: {error_msg}")
+                return False
+            
+            logger.info("✅ Chat completions API через OpenRouter работает")
             
             return embedder_ok
             
         except Exception as e:
-            logger.error(f"❌ Ошибка проверки API: {e}")
+            logger.error(f"❌ Ошибка проверки OpenRouter API: {e}")
             return False
 

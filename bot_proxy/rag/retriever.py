@@ -7,7 +7,7 @@ Retriever (извлекатель) работает одинаково для о
 
 import logging
 from typing import List, Tuple
-from rag.embedder import ProxyAPIEmbedder
+from rag.embedder import OpenRouterEmbedder
 from rag.vectorstore import FAISSVectorStore
 from config import TOP_K_RESULTS
 
@@ -26,7 +26,7 @@ class DocumentRetriever:
     4. Возвращает тексты найденных документов
     """
     
-    def __init__(self, embedder: ProxyAPIEmbedder, vectorstore: FAISSVectorStore):
+    def __init__(self, embedder: OpenRouterEmbedder, vectorstore: FAISSVectorStore):
         """
         Инициализация retriever'а.
         
